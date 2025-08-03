@@ -104,7 +104,13 @@ class LitellmModel(Model):
 
             # Log the full message data for debugging
             full_message_data = self._serialize_message_for_tracing(response.choices[0].message)
-            logger.debug(f"Full message data: {json.dumps(full_message_data, indent=2, ensure_ascii=False)}")
+            try:
+                logger.debug(f"Full message data: {json.dumps(full_message_data, indent=2, ensure_ascii=False)}")
+            except (TypeError, ValueError) as e:
+                # If JSON serialization fails, log a sanitized version
+                sanitized_data = self._sanitize_for_json(full_message_data)
+                logger.debug(f"Full message data (sanitized): {json.dumps(sanitized_data, indent=2, ensure_ascii=False)}")
+                logger.debug(f"JSON serialization error: {e}")
 
             if _debug.DONT_LOG_MODEL_DATA:
                 logger.debug("Received model response")
@@ -388,12 +394,30 @@ class LitellmModel(Model):
                 try:
                     attr_value = getattr(message, attr_name)
                     if not callable(attr_value) and attr_value is not None:
-                        message_data[attr_name] = attr_value
+                        # Convert non-serializable objects to strings
+                        if hasattr(attr_value, '__class__') and 'FieldInfo' in str(attr_value.__class__):
+                            message_data[attr_name] = str(attr_value)
+                        else:
+                            message_data[attr_name] = attr_value
                 except Exception:
                     # Skip attributes that can't be accessed
                     pass
                 
         return message_data
+
+    def _sanitize_for_json(self, obj: Any) -> Any:
+        """Recursively sanitize an object to make it JSON serializable."""
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [self._sanitize_for_json(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {str(k): self._sanitize_for_json(v) for k, v in obj.items()}
+        else:
+            # Convert any other object to string representation
+            return str(obj)
 
 
 class LitellmConverter:
