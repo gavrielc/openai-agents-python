@@ -102,6 +102,10 @@ class LitellmModel(Model):
 
             assert isinstance(response.choices[0], litellm.types.utils.Choices)
 
+            # Log the full message data for debugging
+            full_message_data = self._serialize_message_for_tracing(response.choices[0].message)
+            logger.debug(f"Full message data: {json.dumps(full_message_data, indent=2, ensure_ascii=False)}")
+
             if _debug.DONT_LOG_MODEL_DATA:
                 logger.debug("Received model response")
             else:
