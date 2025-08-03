@@ -142,7 +142,9 @@ class LitellmModel(Model):
                 logger.warning("No usage information returned from Litellm")
 
             if tracing.include_data():
-                span_generation.span_data.output = [response.choices[0].message.model_dump()]
+                # Capture all message fields, not just the ones in model_dump()
+                message_data = self._serialize_message_for_tracing(response.choices[0].message)
+                span_generation.span_data.output = [message_data]
             span_generation.span_data.usage = {
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
@@ -197,6 +199,9 @@ class LitellmModel(Model):
                     final_response = chunk.response
 
             if tracing.include_data() and final_response:
+                # For streaming responses, the final_response is a Response object that's already
+                # been constructed from the stream chunks and should contain all necessary fields
+                # including reasoning_content if it was present in the stream
                 span_generation.span_data.output = [final_response.model_dump()]
 
             if final_response and final_response.usage:
@@ -351,6 +356,40 @@ class LitellmModel(Model):
         if isinstance(value, NotGiven):
             return None
         return value
+
+    def _serialize_message_for_tracing(self, message: litellm.types.utils.Message) -> dict[str, Any]:
+        """Serialize a litellm message for tracing, capturing all fields including custom ones."""
+        # Start with the basic model_dump() data
+        message_data = message.model_dump()
+        
+        # Add any additional fields that might not be in the model
+        if hasattr(message, "reasoning_content") and message.reasoning_content:
+            message_data["reasoning_content"] = message.reasoning_content
+            
+        # Add provider_specific_fields if present
+        provider_specific_fields = message.get("provider_specific_fields", None)
+        if provider_specific_fields:
+            message_data["provider_specific_fields"] = provider_specific_fields
+            
+        # Add any other custom fields that might be present
+        # You can extend this list based on what fields you need to capture
+        for field_name in ["audio", "annotations"]:
+            if hasattr(message, field_name) and getattr(message, field_name) is not None:
+                message_data[field_name] = getattr(message, field_name)
+        
+        # Also capture any other attributes that might be present on the message object
+        # This is a more comprehensive approach to catch any additional fields
+        for attr_name in dir(message):
+            if not attr_name.startswith('_') and attr_name not in message_data:
+                try:
+                    attr_value = getattr(message, attr_name)
+                    if not callable(attr_value) and attr_value is not None:
+                        message_data[attr_name] = attr_value
+                except Exception:
+                    # Skip attributes that can't be accessed
+                    pass
+                
+        return message_data
 
 
 class LitellmConverter:
